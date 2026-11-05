@@ -165,6 +165,18 @@ the spin-the-globe idea and built its own version of it.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 
+## Development checks
+
+Run the country-selection regression test with Python 3 and Quickshell installed:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+The test runs offscreen and reproduces a search result being destroyed when the
+country field is cleared. After changing an installed plugin, restart the shell
+with `omarchy restart shell` if automatic reload keeps the previous QML in memory.
+
 ## License
 
 MIT

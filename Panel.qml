@@ -733,6 +733,13 @@ finally:
     return String(n)
   }
 
+  // Run with the panel's lifetime, not the search delegate's: clearing
+  // the field destroys the result and invalidates its QML context.
+  function pickSearchedCountry(code, name) {
+    countryField.text = ""
+    root.selectCountry(code, name)
+  }
+
   function selectCountry(code, name) {
     state.countryCode = code
     state.countryName = name
@@ -2230,25 +2237,9 @@ finally:
                     horizontalPadding: Style.spacing.controlPaddingX
                     verticalPadding: Style.space(4)
                     onClicked: {
-                      // Deferred: selectCountry() clears root.countryMatches,
-                      // which is this Repeater's own model — doing that
-                      // synchronously from inside this delegate's own click
-                      // handler destroys the Button mid-handler (the first-
-                      // party notifications service hits the same class of
-                      // bug and documents it as Qt.callLater avoiding a
-                      // QV4::Object::insertMember crash when a Repeater is
-                      // mid-incubation while its model is mutated). Without
-                      // this, the handler aborted after clearing the search
-                      // text and never reached selectCountry() at all, so
-                      // picking a search result silently failed to load its
-                      // stations — confirmed via a live "ReferenceError: root
-                      // is not defined" at this exact line in journalctl.
-                      var pickedCode = modelData.code
-                      var pickedName = modelData.name
-                      Qt.callLater(function() {
-                        countryField.text = ""
-                        root.selectCountry(pickedCode, pickedName)
-                      })
+                      // Defer the stable panel-owned function itself, not a
+                      // closure owned by the result that is about to vanish.
+                      Qt.callLater(root.pickSearchedCountry, modelData.code, modelData.name)
                     }
                   }
                 }
