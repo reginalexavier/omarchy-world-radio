@@ -20,7 +20,7 @@ PANEL = Path(__file__).resolve().parents[1] / "Panel.qml"
 
 
 class RecentCountries(unittest.TestCase):
-    def run_qml(self, body, persist_path=None):
+    def run_qml(self, body, persist_path=None, station_delegate=False):
         source = PANEL.read_text()
         names = ["sanitizeStationRow", "isValidStationRow", "loadHistory",
                  "flushHistory", "recordHistory", "playStation", "stopPlayback",
@@ -33,7 +33,15 @@ class RecentCountries(unittest.TestCase):
         station_handler = handler.group(1)
         methods += "\nfunction feedStations(text) {" + station_handler + "\n}"
         flow = re.search(r'              Flow \{\n                id: recentCountriesFlow.*?\n              \}', source, re.S)
-        recent_ui = flow.group().replace("Button {", "TestButton {").replace("Style.", "style.") if flow else ""
+        recent_ui = flow.group().replace("Button {", "TestButton {").replace("Style.", "testStyle.") if flow else ""
+        station_ui = ""
+        if station_delegate:
+            delegate = re.search(r'            delegate: Rectangle \{\n              id: row\n.*?\n            \}', source, re.S)
+            self.assertIsNotNone(delegate, "production station delegate must exist")
+            station_ui = ('ListView { id: stationsList; width: 300; height: 100; model: stationsModel\n'
+                          + delegate.group().replace("Style.", "testStyle.").replace("Color.", "colors.") + '\n}')
+            for name in ["isFavorite", "toggleFavorite", "formatVoteCount"]:
+                methods += "\n" + re.search(r"  function " + name + r"\([^\n]*\) \{.*?\n  \}", source, re.S).group()
         qml = '''import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -42,7 +50,15 @@ ShellRoot {
   id: root
   width: 300
   property var bar: ({foreground: "white", fontFamily: "sans"})
-  QtObject { id: style; property var font: ({bodySmall: 12}); property var spacing: ({controlPaddingX: 6}); function space(n) { return n } }
+  QtObject { id: testStyle; property var font: ({bodySmall: 12, body: 14, caption: 10}); property var spacing: ({controlPaddingX: 6}); property int cornerRadius: 4; function space(n) { return n } function hoverFillFor(f, a) { return a } function selectedFillFor(f, a) { return a } }
+  QtObject { id: colors; property color accent: "blue" }
+  QtObject { id: voteProc; property bool running: false }
+  property string voteUuid: ""
+  property string voteInFlightUuid: ""
+  property bool voteOk: false
+  property var favorites: ({})
+  property int maxFavorites: 100
+  function scheduleFavoritesSave() {}
   function flagFor(code) { return code }
   property var history: []
   property bool historyLoaded: true
@@ -74,7 +90,7 @@ ShellRoot {
   QtObject { id: historyFile; property string saved: ""; function setText(s) { saved = s } }
   function check(ok, message) { if (!ok) throw new Error(message) }
   function row(code, uuid) { return {uuid: uuid || code, name: "Station", playUrl: "https://example.org/live", countryCode: code, countryName: "Country " + code} }
-''' + props + '\n' + methods + '\n' + recent_ui + '''
+''' + props + '\n' + methods + '\n' + recent_ui + '\n' + station_ui + '''
   Timer { interval: 10; running: true; onTriggered: root.runTest() }
   function runTest() {
    try {
@@ -89,6 +105,8 @@ ShellRoot {
         if persist_path:
             qml = qml.replace('QtObject { id: historyFile; property string saved: ""; function setText(s) { saved = s } }',
                               'FileView { id: historyFile; atomicWrites: true; printErrors: false; path: ' + json.dumps(str(persist_path)) + ' }')
+        if station_delegate:
+            qml = qml.replace('  function isFavorite(uuid) { return false }\n', '')
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "shell.qml"
             (Path(tmp) / "TestButton.qml").write_text('''import QtQuick
@@ -157,6 +175,28 @@ playStation(stationsModel.get(0)); stationsModel.clear(); ipcSocket.connected = 
 handleMpvMessage(JSON.stringify({event: "property-change", id: timePosObserveId, data: 1}))
 check(recentCountries[0].name === "Brazil", "station country, not current filter")
 ''')
+
+    def test_production_station_delegate_click_preserves_country_for_history_and_favorites(self):
+        self.run_qml('''
+state.countryCode = "US"
+feedStations(JSON.stringify([{stationuuid: "12345678-abcd", name: "Radio Brazil", url: "https://example.org/live", countrycode: "BR", country: "Brazil"}]))
+check(stationsModel.get(0).countryCode === "BR", "directory model has country metadata")
+stationsList.forceLayout()
+var station = stationsList.itemAtIndex(0)
+check(!!station, "production station delegate instantiated")
+// Invoke the actual production MouseArea click handlers, not playStation(model.get()).
+station.children[0].clicked(null)
+check(state.stationUuid === "12345678-abcd", "station row click starts playback")
+check(history.length === 0, "station click alone must not record history")
+ipcSocket.connected = true
+handleMpvMessage(JSON.stringify({event: "property-change", id: timePosObserveId, data: 0.2}))
+check(history.length === 1 && history[0].countryCode === "BR" && history[0].countryName === "Brazil", "production station click must preserve history country metadata")
+check(recentCountries.length === 1 && recentCountries[0].code === "BR" && recentCountries[0].name === "Brazil", "successful delegate playback creates recent country, not browsing country")
+var star = station.children[station.children.length - 1]
+star.children[0].clicked(null)
+check(!!favorites["12345678-abcd"], "production favorite click adds station")
+check(favorites["12345678-abcd"].countryCode === "BR" && favorites["12345678-abcd"].countryName === "Brazil", "production favorite click must preserve country metadata")
+''', station_delegate=True)
 
     def test_recent_country_button_loads_country_directly_without_recording(self):
         self.run_qml('''
