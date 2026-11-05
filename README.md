@@ -18,6 +18,9 @@ closed catalog, so there's no proprietary anything behind it.
 
 - **Country picker** — flags for popular countries, plus a search box covering every
   country in the directory.
+- **Recent countries** — up to six countries from History, newest first without
+  duplicates, above the fixed country shortcuts. Click one to load its stations.
+  Only actual playback counts, not browsing or a failed connection.
 - **Search by name** — type a station name to filter the list, on its own or combined
   with any other filter you've picked.
 - **Mood and decade** — tap a tag like pop, jazz, or 90s to narrow things down; use both
@@ -36,7 +39,8 @@ closed catalog, so there's no proprietary anything behind it.
   once per session (the first time you open the panel), so stale details don't linger
   and a station pulled from the directory quietly drops off your list.
 - **History** — the last 15 stations you played, newest first. Play one again and it
-  just moves back to the top instead of showing up twice.
+  just moves back to the top instead of showing up twice. A play is recorded once
+  mpv reports a positive playback position, not when you click a station.
 - **Vote** — give a station a thumbs up in the public directory, separate from starring
   it as your own favorite. Its vote count shows in the row too, when it has one.
 - **Station favicon** — each station shows its own logo, when the directory has one.
@@ -131,6 +135,12 @@ favorites yet. (Wondering why History gets its own file instead of sharing one w
 Favorites? There's a short note in
 [docs/adr/0001-history-separate-file.md](docs/adr/0001-history-separate-file.md).)
 
+Recent countries reuse History's file and its 15-station window; there is no separate
+country file. Country details come from the station, even for worldwide searches or
+Favorites. Older saved entries without country details still play normally, but only
+contribute a country after being played again with those details available. A country
+can drop off when its last station leaves History.
+
 <details>
 <summary>The technical version</summary>
 
@@ -160,6 +170,20 @@ Every station here comes from the community-run [Radio Browser](https://www.radi
 directory — thousands of people around the world keeping their local stream listed so
 strangers can find it. This plugin has no affiliation with radiooooo.com; it just liked
 the spin-the-globe idea and built its own version of it.
+
+## Tests
+
+With `python3`, `quickshell`, and `mpv` installed:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+The tests execute the production methods and recent-country repeater in an offscreen
+QML harness (shell/theme controls are replaced with inert test doubles), check atomic
+persistence across separate QML processes, and replay real mpv IPC events from a
+generated local audio file using null audio output. They do not use the live plugin,
+internet radio, or your saved data.
 
 ## Changelog
 
