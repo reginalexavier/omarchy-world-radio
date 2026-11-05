@@ -2569,6 +2569,8 @@ finally:
               required property string uuid
               required property string name
               required property string playUrl
+              required property string countryCode
+              required property string countryName
               required property string codec
               required property int bitrate
               required property string tags
