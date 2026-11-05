@@ -300,6 +300,7 @@ Panel {
   readonly property int maxHistory: 15
   // Reuse History's bounded, atomic on-disk persistence; no second country file.
   readonly property var recentCountries: root.recentCountriesFromHistory(root.history)
+  readonly property var countryChoices: root.recentCountries.concat(root.curatedCountries.filter(function(c) { return !root.recentCountries.some(function(r) { return r.code === c.code }) }))
 
   function recentCountriesFromHistory(rows) {
     var countries = []
@@ -2189,42 +2190,16 @@ finally:
               PanelSeparator { foreground: root.bar.foreground }
               PanelSectionHeader { text: "COUNTRY"; foreground: root.bar.foreground }
 
-              PanelSectionHeader {
-                visible: root.recentCountries.length > 0
-                text: "RECENT COUNTRIES"
-                foreground: root.bar.foreground
-              }
               Flow {
                 id: recentCountriesFlow
                 objectName: "recentCountries"
                 width: parent.width
-                visible: root.recentCountries.length > 0
                 spacing: Style.space(6)
                 Repeater {
-                  model: root.recentCountries
+                  model: root.countryChoices
                   delegate: Button {
                     required property var modelData
                     objectName: "recentCountry-" + modelData.code
-                    text: root.flagFor(modelData.code) + " " + modelData.name
-                    foreground: root.bar.foreground
-                    fontFamily: root.bar.fontFamily
-                    fontSize: Style.font.bodySmall
-                    horizontalPadding: Style.spacing.controlPaddingX
-                    verticalPadding: Style.space(4)
-                    bordered: true
-                    active: state.countryCode === modelData.code
-                    onClicked: root.selectCountry(modelData.code, modelData.name)
-                  }
-                }
-              }
-
-              Flow {
-                width: parent.width
-                spacing: Style.space(6)
-                Repeater {
-                  model: root.curatedCountries
-                  delegate: Button {
-                    required property var modelData
                     text: root.flagFor(modelData.code) + " " + modelData.name
                     foreground: root.bar.foreground
                     fontFamily: root.bar.fontFamily

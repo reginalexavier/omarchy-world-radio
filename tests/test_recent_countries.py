@@ -27,7 +27,8 @@ class RecentCountries(unittest.TestCase):
                  "handleMpvMessage", "selectCountry", "recentCountriesFromHistory", "resortStations"]
         methods = "\n".join(m.group() for name in names
                             if (m := re.search(r"  function " + name + r"\([^\n]*\) \{.*?\n  \}", source, re.S)))
-        props = "\n".join(re.findall(r"^  (?:readonly )?property [^\n]+(?:ObserveId|pendingHistoryRow|recentCountries)[^\n]*", source, re.M))
+        props = "\n".join(re.findall(r"^  (?:readonly )?property [^\n]+(?:ObserveId|pendingHistoryRow|recentCountries|countryChoices)[^\n]*", source, re.M))
+        props += "\n" + re.search(r"  readonly property var curatedCountries: \[.*?\n  \]", source, re.S).group()
         handler = re.search(r"id: stationsProc.*?onStreamFinished: \{(.*?)\n      \}", source, re.S)
         assert handler is not None
         station_handler = handler.group(1)
@@ -132,6 +133,18 @@ Item {
         self.assertNotIn(" WARN", result.stdout + result.stderr)
         self.assertNotIn(" ERROR", result.stdout + result.stderr)
 
+    def test_one_country_grid_promotes_recent_and_removes_duplicates(self):
+        self.run_qml('''
+check(recentCountriesFlow.children.filter(function(c) { return c.objectName.indexOf("recentCountry-") === 0 }).length === curatedCountries.length, "fixed countries shown before any playback")
+recordHistory(row("HT")); recordHistory(row("AU")); recordHistory(row("BR"))
+var codes = recentCountriesFlow.children.filter(function(c) { return c.objectName.indexOf("recentCountry-") === 0 }).map(function(c) { return c.objectName.slice(14) })
+check(codes.slice(0, 3).join(",") === "BR,AU,HT", "recent countries lead same grid")
+check(codes.length === curatedCountries.length + 1, "only Haiti adds a country")
+check(codes.filter(function(c) { return c === "BR" }).length === 1, "Brazil not duplicated")
+check(codes.filter(function(c) { return c === "AU" }).length === 1, "Australia not duplicated")
+check(codes[3] === "US", "remaining fixed order preserved")
+''')
+
     def test_recent_countries_are_newest_unique_six_from_persisted_history(self):
         self.run_qml('''
 check(recentCountries.length === 0, "empty history")
@@ -202,7 +215,7 @@ check(favorites["12345678-abcd"].countryCode === "BR" && favorites["12345678-abc
         self.run_qml('''
 var flow = root.children.find(function(c) { return c.objectName === "recentCountries" })
 check(!!flow, "recent country shortcuts must exist")
-check(!flow.visible, "empty recent section hidden")
+check(flow.visible, "fixed shortcuts visible before any play")
 recordHistory(row("BR"))
 check(flow.visible, "recent section visible after play")
 var button = flow.children.find(function(c) { return c.objectName === "recentCountry-BR" })
@@ -212,7 +225,9 @@ check(state.countryCode === "BR" && loads === 1, "click loads country directly")
 check(history.length === 1, "browsing never records a play")
 ''')
         source = PANEL.read_text()
-        self.assertLess(source.index("id: recentCountriesFlow"), source.index("model: root.curatedCountries"))
+        self.assertIn("model: root.countryChoices", source)
+        self.assertNotIn("model: root.curatedCountries", source)
+        self.assertNotIn('text: "RECENT COUNTRIES"', source)
 
     def test_country_metadata_survives_history_save_and_reload(self):
         self.run_qml('''
