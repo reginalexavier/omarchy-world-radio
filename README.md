@@ -18,8 +18,9 @@ closed catalog, so there's no proprietary anything behind it.
 
 - **Country picker** — flags for popular countries, plus a search box covering every
   country in the directory.
-- **Recent countries** — up to six countries from History, newest first without
-  duplicates, above the fixed country shortcuts. Click one to load its stations.
+- **Recent countries** — up to six countries from History lead the country grid,
+  newest first. The fixed shortcuts follow in the same grid without duplicates.
+  Click any country to load its stations.
   Only actual playback counts, not browsing or a failed connection.
 - **Search by name** — type a station name to filter the list, on its own or combined
   with any other filter you've picked.
