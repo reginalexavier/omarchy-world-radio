@@ -84,6 +84,8 @@ Panel {
   readonly property int pauseObserveId: 2
   readonly property int pausedForCacheObserveId: 3
   readonly property int cacheBufferingStateObserveId: 4
+  readonly property int timePosObserveId: 5
+  property var pendingHistoryRow: null
 
   readonly property var curatedCountries: [
     { code: "US", name: "United States" },
@@ -296,6 +298,18 @@ Panel {
   property bool historyLoaded: false
   readonly property int maxHistoryFileBytes: 1048576
   readonly property int maxHistory: 15
+  // Reuse History's bounded, atomic on-disk persistence; no second country file.
+  readonly property var recentCountries: root.recentCountriesFromHistory(root.history)
+
+  function recentCountriesFromHistory(rows) {
+    var countries = []
+    for (var i = 0; i < rows.length && countries.length < 6; i++) {
+      var code = rows[i].countryCode
+      if (!code || countries.some(function(c) { return c.code === code })) continue
+      countries.push({ code: code, name: rows[i].countryName || code })
+    }
+    return countries
+  }
   // History's own row height cap — independent of maxHistory (how many
   // entries are kept) so the section can never push the filter pickers
   // below it further down the column as it fills toward that cap; past
@@ -428,7 +442,9 @@ finally:
                 playUrl: String((s && (s.url_resolved || s.url)) || ""),
                 codec: String((s && s.codec) || ""),
                 bitrate: Number((s && s.bitrate) || 0),
-                tags: String((s && s.tags) || "")
+                tags: String((s && s.tags) || ""),
+                countryCode: String((s && s.countrycode) || ""),
+                countryName: String((s && s.country) || "")
               })
               if (!root.isValidStationRow(safe)) continue
               responseByUuid[uuid] = safe
@@ -515,7 +531,9 @@ finally:
       playUrl: String(row.playUrl || "").slice(0, 2000),
       codec: String(row.codec || "").slice(0, 32),
       bitrate: Math.max(0, Math.min(9999999, Number(row.bitrate) || 0)),
-      tags: String(row.tags || "").slice(0, 500)
+      tags: String(row.tags || "").slice(0, 500),
+      countryCode: /^[A-Za-z]{2}$/.test(String(row.countryCode || "")) ? String(row.countryCode).toUpperCase() : "",
+      countryName: String(row.countryName || "").slice(0, 200)
     }
   }
 
@@ -617,7 +635,7 @@ finally:
   // Records a play in History: bumps an already-present station back to
   // the top instead of duplicating it (a listener replaying their one
   // favorite station shouldn't push everything else out), then trims to
-  // maxHistory. Called from playStation() for every successful play.
+  // maxHistory. Called once mpv reports a positive playback position.
   //
   // Guarded on historyLoaded, same as scheduleHistorySave() below — not
   // just to skip an unnecessary disk write, but because loadHistory()
@@ -685,7 +703,7 @@ finally:
     var rows = []
     for (var i = 0; i < stationsModel.count; i++) {
       var r = stationsModel.get(i)
-      rows.push({ uuid: r.uuid, name: r.name, playUrl: r.playUrl, codec: r.codec, bitrate: r.bitrate, tags: r.tags, favicon: r.favicon, homepage: r.homepage, votes: r.votes })
+      rows.push({ uuid: r.uuid, name: r.name, playUrl: r.playUrl, codec: r.codec, bitrate: r.bitrate, tags: r.tags, favicon: r.favicon, homepage: r.homepage, votes: r.votes, countryCode: r.countryCode, countryName: r.countryName })
     }
     rows.sort(function(a, b) {
       var af = root.isFavorite(a.uuid) ? 0 : 1
@@ -993,7 +1011,8 @@ finally:
     state.playing = true
     root.resetPlaybackDisplay()
     root.cancelSleepTimer()
-    root.recordHistory(row)
+    // Copy the model row now: later browsing can clear/reorder its ListModel.
+    root.pendingHistoryRow = root.sanitizeStationRow(row)
 
     if (mpvProc.running) root.switchingStation = true
     ipcSocket.connected = false
@@ -1047,6 +1066,7 @@ finally:
   }
 
   function stopPlayback() {
+    root.pendingHistoryRow = null
     if (ipcSocket.connected) {
       ipcSocket.write(JSON.stringify({ command: ["quit"] }) + "\n")
       ipcSocket.flush()
@@ -1068,6 +1088,12 @@ finally:
     var msg
     try { msg = JSON.parse(line) } catch (e) { return }
     if (!msg || msg.event !== "property-change") return
+    // Unlike a click or file-loaded, a positive time-pos confirms playback
+    // progressed. observe_property also seeds it when IPC connects late.
+    if (msg.id === root.timePosObserveId && typeof msg.data === "number" && msg.data > 0 && root.pendingHistoryRow && root.historyLoaded) {
+      root.recordHistory(root.pendingHistoryRow)
+      root.pendingHistoryRow = null
+    }
     if (msg.id === root.metadataObserveId && msg.data && typeof msg.data === "object") {
       // mpv sends this immediately on observe_property registration (with
       // the current value) and again on every future change, so this alone
@@ -1337,6 +1363,8 @@ finally:
                 bitrate: Number((s && s.bitrate) || 0),
                 tags: String((s && s.tags) || ""),
                 favicon: favicon,
+                countryCode: /^[A-Za-z]{2}$/.test(String((s && s.countrycode) || "")) ? String(s.countrycode).toUpperCase() : "",
+                countryName: String((s && s.country) || "").slice(0, 200),
                 homepage: homepage,
                 votes: Number((s && s.votes) || 0)
               })
@@ -1476,6 +1504,7 @@ finally:
       ipcRetryTimer.stop()
       ipcSocket.connected = false
       state.playing = false
+      root.pendingHistoryRow = null
       root.resetPlaybackDisplay()
       root.cancelSleepTimer()
     }
@@ -1542,6 +1571,7 @@ finally:
         // confirmed live against a real mpv instance and stream.
         write(JSON.stringify({ command: ["observe_property", root.pausedForCacheObserveId, "paused-for-cache"] }) + "\n")
         write(JSON.stringify({ command: ["observe_property", root.cacheBufferingStateObserveId, "cache-buffering-state"] }) + "\n")
+        write(JSON.stringify({ command: ["observe_property", root.timePosObserveId, "time-pos"] }) + "\n")
         flush()
       }
     }
@@ -2158,6 +2188,35 @@ finally:
 
               PanelSeparator { foreground: root.bar.foreground }
               PanelSectionHeader { text: "COUNTRY"; foreground: root.bar.foreground }
+
+              PanelSectionHeader {
+                visible: root.recentCountries.length > 0
+                text: "RECENT COUNTRIES"
+                foreground: root.bar.foreground
+              }
+              Flow {
+                id: recentCountriesFlow
+                objectName: "recentCountries"
+                width: parent.width
+                visible: root.recentCountries.length > 0
+                spacing: Style.space(6)
+                Repeater {
+                  model: root.recentCountries
+                  delegate: Button {
+                    required property var modelData
+                    objectName: "recentCountry-" + modelData.code
+                    text: root.flagFor(modelData.code) + " " + modelData.name
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    fontSize: Style.font.bodySmall
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.space(4)
+                    bordered: true
+                    active: state.countryCode === modelData.code
+                    onClicked: root.selectCountry(modelData.code, modelData.name)
+                  }
+                }
+              }
 
               Flow {
                 width: parent.width
